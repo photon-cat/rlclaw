@@ -2,7 +2,7 @@
   "notebooks": [
     {
       "id": "01",
-      "path": "/Users/delta/claudehack/rlclaw/src/colab/notebook_01.ipynb",
+      "path": "/home/jacob/rlclaw/src/colab/notebook_01.ipynb",
       "status": "available",
       "checkedOutBy": null,
       "experimentName": null,
@@ -12,7 +12,7 @@
     },
     {
       "id": "02",
-      "path": "/Users/delta/claudehack/rlclaw/src/colab/notebook_02.ipynb",
+      "path": "/home/jacob/rlclaw/src/colab/notebook_02.ipynb",
       "status": "available",
       "checkedOutBy": null,
       "experimentName": null,
@@ -22,7 +22,7 @@
     },
     {
       "id": "03",
-      "path": "/Users/delta/claudehack/rlclaw/src/colab/notebook_03.ipynb",
+      "path": "/home/jacob/rlclaw/src/colab/notebook_03.ipynb",
       "status": "available",
       "checkedOutBy": null,
       "experimentName": null,

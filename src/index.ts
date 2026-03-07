@@ -84,7 +84,8 @@ async function main() {
       allowedTools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "Agent"],
       agents,
       maxTurns: 100,
-      permissionMode: "acceptEdits",
+      permissionMode: "bypassPermissions",
+      allowDangerouslySkipPermissions: true,
     },
   })) {
     if ("result" in message) {

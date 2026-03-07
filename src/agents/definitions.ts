@@ -13,10 +13,10 @@ To run an experiment:
 3. Write your experiment code into src/colab/notebook_XX.ipynb
 4. Run it:
    curl -X POST http://127.0.0.1:18808/run -H "Content-Type: application/json" \\
-     -d '{"filePath": "/Users/delta/claudehack/rlclaw/src/colab/notebook_XX.ipynb"}'
+     -d '{"filePath": "/home/jacob/rlclaw/src/colab/notebook_XX.ipynb"}'
 5. Poll for results (every 30s):
    curl -X POST http://127.0.0.1:18808/read-outputs -H "Content-Type: application/json" \\
-     -d '{"filePath": "/Users/delta/claudehack/rlclaw/src/colab/notebook_XX.ipynb"}'
+     -d '{"filePath": "/home/jacob/rlclaw/src/colab/notebook_XX.ipynb"}'
 6. Read outputs and update pool_state.json status back to "available"
 
 HARD LIMIT: 15 minutes per experiment. Design experiments to finish well within this.

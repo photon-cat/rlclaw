@@ -1,7 +1,7 @@
 {
   "experiments": [],
   "baselines": {
-    "pid": { "total_cost": null, "lataccel_cost": null, "jerk_cost": null, "note": "run evaluator to populate" },
+    "pid": { "total_cost": 84.85, "lataccel_cost": 1.272, "jerk_cost": 21.27, "note": "100 segs, ubuntu baseline run" },
     "tfpgh_bc": { "total_cost": 43.776, "lataccel_cost": null, "jerk_cost": null, "note": "from tfpgh README" }
   }
 }
