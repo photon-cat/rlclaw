@@ -44,7 +44,14 @@ Scores: PID baseline ~85 (100 segs) | SOTA tfpgh v2 17.789 (MPC) | tfpgh v1 43.7
   tfpgh v2: MPC with NumPy inverse CDF sampling of physics model probabilities (17.789)
 
 Reference code: vendor/commaai/ (v2 challenge), vendor/tfpgh/ (v2 SOTA solution)
-Our controllers: src/controllers/ | Training: src/algos/ | Results: src/eval/results.json
+
+=== WORKSPACE ===
+All your work goes in workspace/ (gitignored). Do NOT write to src/.
+  workspace/controllers/  — your controller implementations
+  workspace/algos/        — training scripts
+  workspace/checkpoints/  — saved models
+  workspace/eval/         — evaluation results and logs
+  workspace/results.json  — experiment result tracker
 
 GPU: Local RTX 5070 Ti (16GB VRAM). Run experiments directly as python scripts.
 Max 15 min per experiment. Controllers must run at 10Hz+, target <100K params.
@@ -66,7 +73,10 @@ Be thorough but efficient. Always report numbers, not just "it worked".
 
 IMPORTANT: If you are running a long task (training, large eval), periodically check commands.txt
 in the project root. If it has content, read it, acknowledge by writing a short response to
-src/discord_response.txt, and adapt your current work if the command is relevant.`,
+src/discord_response.txt, and adapt your current work if the command is relevant.
+
+All your work goes in workspace/ — controllers, training scripts, checkpoints, results.
+Do NOT write to src/. Read vendor/ for reference but don't modify it.`,
     tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
   },
 };
@@ -84,7 +94,7 @@ Each time you call the worker, give it a SPECIFIC, ACTIONABLE task. Not vague go
 Good: "Read vendor/tfpgh/controllers/lookup.py and vendor/tfpgh/tinyphysics.py, summarize how the MPC lookup table was generated and how the physics model probabilities are sampled"
 Bad: "Study the SOTA solution"
 
-Good: "Write a CMA-ES training script to src/algos/cmaes_mlp.py that evolves a 2-hidden-layer MLP (32,16) to minimize total_cost on 100 segments. Run it for 5 minutes."
+Good: "Write a CMA-ES training script to workspace/algos/cmaes_mlp.py that evolves a 2-hidden-layer MLP (32,16) to minimize total_cost on 100 segments. Run it for 5 minutes."
 Bad: "Try to beat PID"
 
 === COMMANDS FILE ===
@@ -116,7 +126,7 @@ Phase 3: Iterate
   - Better controllers generate better data -> retrain
   - Explore novel architectures and MPC variants
 
-Track all results in src/eval/results.json. Always know current best score.
+Track all results in workspace/results.json. Always know current best score.
 After each worker task, briefly note what you learned and what to do next.`;
 
 const promptArg = process.argv

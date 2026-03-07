@@ -11,3 +11,4 @@ wandb/
 *.zip
 *.vsix
 commands.txt
+workspace/
