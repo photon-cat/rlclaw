@@ -12,14 +12,15 @@ for lateral car steering control. Beat PID (~85 on 100 segs), approach SOTA (43.
 
 ## Architecture
 
+Single-agent mode (default, cost-efficient):
 ```
-Main Agent (orchestrator, src/index.ts)
-  ├── arch-search      → controller architectures (<100K params)
-  ├── reward-optimizer → loss functions, noise annealing, training objectives
-  ├── data-engineer    → data generation, pipelines, DAgger
-  ├── evaluator        → benchmarks, result tracking, reports
-  └── gpu-manager      → local GPU experiment management
+Orchestrator (plans, reviews, decides next step)
+  └── Worker (executes one task at a time, returns results)
+       └── orchestrator reviews → delegates next task → ...
 ```
+
+Multi-agent mode available in `src/agents/definitions.ts` (5 specialists).
+Switch by importing and passing `agents` to the query options in index.ts.
 
 ## Project Structure
 

@@ -1,48 +1,78 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import { agents } from "./agents/definitions";
+import type { AgentDefinition } from "@anthropic-ai/claude-agent-sdk";
 
 // Allow running from within another Claude Code session
 delete process.env.CLAUDECODE;
 
-const SYSTEM_PROMPT = `You are the lead researcher orchestrating a team of agents to solve the comma.ai Controls Challenge.
+const CHALLENGE_CONTEXT = `=== COMMA CONTROLS CHALLENGE ===
+Goal: Minimize total_cost = (lataccel_cost * 50) + jerk_cost for lateral car control.
+  - lataccel_cost: MSE between actual and target lateral acceleration
+  - jerk_cost: smoothness penalty on lateral acceleration changes
 
-GOAL: Find compute-efficient methods to minimize total_cost = (lataccel_cost * 50) + jerk_cost
-for lateral car control. Beat the PID baseline (~85 on 100 segs) and approach the SOTA (43.776)
-using a local RTX 5070 Ti (16GB VRAM), 15 min per experiment.
+Simulator: vendor/commaai/tinyphysics.py (autoregressive ONNX model, real driving data)
+Controller interface:
+  class Controller(BaseController):
+    def update(self, target_lataccel, current_lataccel, state, future_plan) -> float:
+      # state: (roll_lataccel, v_ego, a_ego)
+      # future_plan: (lataccel[50], roll_lataccel[50], v_ego[50], a_ego[50])
+      # return: steer_action in [-2, 2]
 
-Reference implementations:
-  vendor/commaai/ — original challenge (PID baseline, tinyphysics simulator)
-  vendor/tfpgh/  — best known solution (CMA-ES → PGTO → behavioral cloning, score 43.776)
+Scores: PID baseline ~85 (100 segs) | SOTA tfpgh 43.776
+  tfpgh approach: CMA-ES MLP (~55) → GPU trajectory optimization (~43.2) → behavioral cloning student (43.776)
 
-Your team:
-  arch-search     — explores controller architectures (small MLPs, SSMs, hybrid PID+NN)
-  reward-optimizer — designs loss functions and training objectives
-  data-engineer   — generates training data, manages pipelines
-  evaluator       — runs benchmarks, tracks results, generates reports
-  gpu-manager     — manages local GPU experiments, monitors VRAM
+Reference code: vendor/commaai/ (challenge), vendor/tfpgh/ (best solution)
+Our controllers: src/controllers/ | Training: src/algos/ | Results: src/eval/results.json
 
-=== LOCAL GPU ===
-RTX 5070 Ti with 16GB VRAM, shared across all agents.
-Run experiments directly as python scripts. No Colab bridge needed.
-Hard limit: 15 minutes per experiment.
+GPU: Local RTX 5070 Ti (16GB VRAM). Run experiments directly as python scripts.
+Max 15 min per experiment. Controllers must run at 10Hz+, target <100K params.
+
+Quick eval (~7s): cd vendor/commaai && python3 tinyphysics.py --model_path ./models/tinyphysics.onnx --data_path ./data --num_segs 100 --controller pid`;
+
+const worker: Record<string, AgentDefinition> = {
+  worker: {
+    description:
+      "Executes research tasks: reads code, writes controllers, runs training, evaluates results. Use this for any task that requires tools.",
+    prompt: `You are a research engineer working on the comma.ai Controls Challenge.
+You receive specific tasks from the lead researcher and execute them thoroughly.
+
+${CHALLENGE_CONTEXT}
+
+You have access to all tools: read/write/edit files, run bash commands, search code.
+Execute the task you're given completely, then report back with concrete results and metrics.
+Be thorough but efficient. Always report numbers, not just "it worked".`,
+    tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
+  },
+};
+
+const ORCHESTRATOR_PROMPT = `You are the lead researcher for the comma.ai Controls Challenge.
+
+${CHALLENGE_CONTEXT}
+
+=== HOW YOU WORK ===
+You have ONE worker agent ("worker") that executes tasks for you.
+You PLAN what to do, then delegate ONE task at a time to the worker using the Agent tool.
+When the worker returns, you REVIEW results, UPDATE your plan, and delegate the next task.
+
+Each time you call the worker, give it a SPECIFIC, ACTIONABLE task. Not vague goals.
+Good: "Read vendor/tfpgh/controllers/bc.py and vendor/tfpgh/offline/config.py, summarize the architecture, loss function, and training setup"
+Bad: "Study the SOTA solution"
+
+Good: "Write a CMA-ES training script to src/algos/cmaes_mlp.py that evolves a 2-hidden-layer MLP (32,16) to minimize total_cost on 100 segments. Run it for 5 minutes."
+Bad: "Try to beat PID"
 
 === RESEARCH STRATEGY ===
-Phase 1: Understand the problem
-  - Have evaluator run PID baseline to confirm scores
-  - Have arch-search study the tfpgh solution architecture
-  - Establish local eval pipeline (100 segments, fast CPU eval)
-
+Phase 1: Understand
+  - Run PID baseline, study tfpgh solution architecture
+  - Establish fast local eval pipeline
 Phase 2: Quick wins
-  - CMA-ES on a small MLP (can run in <15 min on GPU)
-  - Improved PID with learned gains
-  - Simple behavioral cloning from PID trajectories (no expensive PGTO)
-
+  - CMA-ES on small MLP, improved PID with learned gains
+  - Simple behavioral cloning from PID trajectories
 Phase 3: Iterate
-  - Train better controllers using data from Phase 2
-  - Explore novel architectures that are compute-efficient
-  - Self-improvement loop: best controller generates better data → retrain
+  - Better controllers generate better data → retrain
+  - Explore novel architectures
 
-Track all results in src/eval/results.json. Always know current best score.`;
+Track all results in src/eval/results.json. Always know current best score.
+After each worker task, briefly note what you learned and what to do next.`;
 
 const promptArg = process.argv
   .find((a) => a.startsWith("--prompt="))
@@ -52,19 +82,16 @@ const promptArg = process.argv
 
 const defaultPrompt = `Begin the research program for the comma.ai Controls Challenge.
 
-First, set up the project:
-1. Have the evaluator run the PID baseline locally (100 segments) to establish baseline scores
-2. Have arch-search study vendor/tfpgh/ to understand the winning approach
-3. Have data-engineer set up the data pipeline (download dataset if needed)
-
-Then start Phase 2: design a compute-efficient controller that can be trained in under 15 minutes
-on the local RTX 5070 Ti. Start with the simplest approach that could beat PID.`;
+Start with Phase 1:
+1. Run the PID baseline locally (100 segments) to confirm scores
+2. Study the tfpgh SOTA solution to understand what worked
+3. Then move to Phase 2: design a compute-efficient controller that can beat PID`;
 
 const prompt = promptArg || defaultPrompt;
 
 async function main() {
   console.log(`\n=== rlclaw — comma controls challenge ===`);
-  console.log(`Agents: ${Object.keys(agents).join(", ")}`);
+  console.log(`Mode: orchestrator + single worker`);
   console.log(`GPU: RTX 5070 Ti (16GB VRAM)`);
   console.log(`Prompt: ${prompt.slice(0, 100)}...\n`);
 
@@ -72,10 +99,10 @@ async function main() {
     prompt,
     options: {
       cwd: process.cwd(),
-      systemPrompt: SYSTEM_PROMPT,
+      systemPrompt: ORCHESTRATOR_PROMPT,
       allowedTools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "Agent"],
-      agents,
-      maxTurns: 100,
+      agents: worker,
+      maxTurns: 200,
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
     },
