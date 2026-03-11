@@ -195,6 +195,63 @@ python3 -m src.algos.cmaes_train --num_segs 20 --max_time 300 --resume
 | `!help` | Show commands |
 | Anything else | Routed to mediator (Opus) which can answer questions or steer research |
 
+## Colab CLI
+
+A standalone CLI tool for managing Google Colab GPU runtimes and executing Python code from the terminal. Located in `colab-cli/`. No browser or VS Code needed after initial auth.
+
+### Setup
+
+1. Install the [Google Colab VS Code extension](https://marketplace.visualstudio.com/items?itemName=google.colab) (just needs to be installed, not running)
+
+2. Extract OAuth credentials from the extension:
+```bash
+# Client ID
+grep -oE '[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com' \
+  ~/.vscode/extensions/google.colab-*/out/extension.js | head -1
+
+# Client Secret
+grep -oE 'GOCSPX-[A-Za-z0-9_-]+' \
+  ~/.vscode/extensions/google.colab-*/out/extension.js | head -1
+```
+
+3. Create `colab-cli/.env`:
+```bash
+COLAB_CLIENT_ID=<client-id-from-above>
+COLAB_CLIENT_SECRET=<secret-from-above>
+```
+
+4. Install and authenticate:
+```bash
+cd colab-cli && npm install
+npx colab auth    # opens browser, one-time
+```
+
+### Quick Start
+
+```bash
+cd colab-cli
+
+# Check your account
+npx colab info
+
+# Create a GPU runtime
+npx colab create GPU T4      # or A100, H100, L4
+
+# Run code on it
+npx colab exec 'import torch; print(torch.cuda.get_device_name(0))'
+
+# Run a file
+npx colab exec -f train.py
+
+# Interactive REPL
+npx colab shell
+
+# List active runtimes
+npx colab ls
+```
+
+See `colab-cli/README.md` for full documentation.
+
 ## License
 
 MIT

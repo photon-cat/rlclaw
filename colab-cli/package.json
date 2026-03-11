@@ -1,0 +1,23 @@
+{
+  "name": "colab-cli",
+  "version": "0.1.0",
+  "description": "CLI tool for managing Google Colab GPU runtimes and executing code — no browser needed",
+  "main": "src/client.ts",
+  "bin": {
+    "colab": "./src/cli.ts"
+  },
+  "scripts": {
+    "colab": "tsx src/cli.ts"
+  },
+  "keywords": ["colab", "gpu", "jupyter", "cli"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "tsx": "^4.21.0",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.5",
+    "typescript": "^5.9.3"
+  }
+}
