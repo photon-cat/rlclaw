@@ -1,0 +1,16 @@
+[Unit]
+Description=rlclaw discord bot
+After=network.target
+
+[Service]
+Type=simple
+User=jacob
+WorkingDirectory=/home/jacob/rlclaw
+ExecStart=/usr/bin/npx tsx src/discord-bot.ts
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -54,6 +54,18 @@
 
     .task { color: #3b82f6; font-size: 0.85em; margin-top: 6px; word-break: break-word; }
     .refresh-info { color: #333; font-size: 0.75em; margin-top: 12px; }
+
+    .tabs { display: flex; gap: 0; margin-bottom: 0; }
+    .tab { padding: 8px 16px; background: #0a0a0a; border: 1px solid #222; border-bottom: none; cursor: pointer; color: #666; font-size: 0.85em; font-family: inherit; }
+    .tab.active { background: #141414; color: #ff6b35; border-bottom: 1px solid #141414; margin-bottom: -1px; z-index: 1; }
+    .tab:first-child { border-radius: 6px 0 0 0; }
+    .tab:last-child { border-radius: 0 6px 0 0; }
+    .output-panel { background: #0d0d0d; border: 1px solid #222; border-radius: 0 0 6px 6px; padding: 12px; max-height: 500px; overflow-y: auto; font-size: 0.78em; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+    .output-panel .orca { color: #ff6b35; }
+    .output-panel .worker { color: #3b82f6; }
+    .output-panel .cmd { color: #22c55e; }
+    .output-panel .time-tag { color: #444; margin-right: 6px; }
+    .output-panel .raw { color: #888; }
   </style>
 </head>
 <body>
@@ -66,6 +78,7 @@
       <div class="stat"><div class="label">Status</div><div class="value" id="session-status">—</div></div>
       <div class="stat"><div class="label">Turns</div><div class="value" id="turns">—</div></div>
       <div class="stat"><div class="label">Worker Calls</div><div class="value" id="worker-calls">—</div></div>
+      <div class="stat"><div class="label">Active Workers</div><div class="value" id="active-workers" style="color:#3b82f6">—</div></div>
       <div class="stat"><div class="label">Runtime</div><div class="value" id="runtime">—</div></div>
     </div>
 
@@ -117,6 +130,14 @@
       <h3>Discord Messages</h3>
       <div class="log" id="discord-log"></div>
     </div>
+  </div>
+
+  <div style="margin-bottom: 14px;">
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('session')">Session Log</div>
+      <div class="tab" onclick="switchTab('raw')">Raw Output</div>
+    </div>
+    <div class="output-panel" id="output-panel"></div>
   </div>
 
   <div class="card full">
@@ -248,8 +269,63 @@
       if (e.key === 'Enter') sendCmd();
     });
 
+    let activeTab = 'session';
+    function switchTab(tab) {
+      activeTab = tab;
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelector(`.tab[onclick="switchTab('${tab}')"]`).classList.add('active');
+      refreshOutput();
+    }
+
+    async function refreshOutput() {
+      const panel = document.getElementById('output-panel');
+      try {
+        if (activeTab === 'session') {
+          const entries = await fetch('/api/session-log').then(r => r.json()).catch(() => []);
+
+          // Compute active workers from dispatch/result pairs
+          const dispatchCount = {};
+          const resultCount = {};
+          entries.forEach(e => {
+            const a = e.agent || 'worker';
+            if (e.role === 'worker_dispatch') dispatchCount[a] = (dispatchCount[a] || 0) + 1;
+            if (e.role === 'worker_result') resultCount[a] = (resultCount[a] || 0) + 1;
+          });
+          const activeNames = Object.keys(dispatchCount).filter(a => (dispatchCount[a] || 0) > (resultCount[a] || 0));
+          const awEl = document.getElementById('active-workers');
+          if (awEl) {
+            awEl.textContent = activeNames.length > 0 ? activeNames.join(', ') : 'none';
+            awEl.style.color = activeNames.length > 0 ? '#3b82f6' : '#666';
+          }
+
+          panel.innerHTML = entries.map(e => {
+            const t = new Date(e.time).toLocaleTimeString();
+            let cls, label;
+            switch (e.role) {
+              case 'orchestrator': cls = 'orca'; label = 'ORCA'; break;
+              case 'worker_dispatch': cls = 'worker'; label = '-> ' + (e.agent || 'worker'); break;
+              case 'worker_result': cls = 'worker'; label = '<- ' + (e.agent || 'worker'); break;
+              case 'command': cls = 'cmd'; label = 'CMD'; break;
+              default: cls = 'raw'; label = e.role.toUpperCase();
+            }
+            return `<span class="time-tag">${t}</span><span class="${cls}">[${label}]</span> ${escHtml(e.content)}\n`;
+          }).join('');
+        } else {
+          const data = await fetch('/api/agent-output').then(r => r.json()).catch(() => ({ output: '' }));
+          panel.innerHTML = `<span class="raw">${escHtml(data.output)}</span>`;
+        }
+        panel.scrollTop = panel.scrollHeight;
+      } catch {}
+    }
+
+    function escHtml(s) {
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
     refresh();
+    refreshOutput();
     setInterval(refresh, 3000);
+    setInterval(refreshOutput, 5000);
   </script>
 </body>
 </html>

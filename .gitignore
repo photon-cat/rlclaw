@@ -13,3 +13,6 @@ wandb/
 commands.txt
 workspace/
 backups/
+*.npy
+src/discord_outbox/
+/tmp/

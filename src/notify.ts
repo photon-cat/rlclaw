@@ -11,7 +11,7 @@ export async function notify(
 ): Promise<void> {
   const mention = process.env.DISCORD_USER_ID ? `<@${process.env.DISCORD_USER_ID}>` : "";
   const ping = (level === "input" || level === "error") && mention ? ` ${mention}` : "";
-  const msg = `**rlclaw**${ping} — ${content}`;
+  const msg = `**[orchestrator]**${ping} ${content}`;
   const truncated = msg.length > 1990 ? msg.slice(0, 1990) + "..." : msg;
 
   try { recordDiscord(channel, truncated); } catch {}

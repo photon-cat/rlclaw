@@ -1,8 +1,42 @@
 {
-  "experiments": [],
+  "experiments": [
+    {
+      "controller": "pid",
+      "tag": "pid_baseline",
+      "num_segs": 100,
+      "total_cost": 81.0021,
+      "lataccel_cost": 1.2195,
+      "jerk_cost": 20.0256,
+      "elapsed_s": 19.5
+    },
+    {
+      "controller": "mpc",
+      "tag": "mpc_v1_broken",
+      "num_segs": 100,
+      "total_cost": 95903.1918,
+      "lataccel_cost": 1898.2802,
+      "jerk_cost": 989.1825,
+      "elapsed_s": 400.0
+    }
+  ],
   "baselines": {
-    "pid": { "total_cost": 84.85, "lataccel_cost": 1.272, "jerk_cost": 21.27, "note": "100 segs, ubuntu baseline run" },
-    "tfpgh_v1_bc": { "total_cost": 43.776, "lataccel_cost": null, "jerk_cost": null, "note": "v1 behavioral cloning" },
-    "tfpgh_v2_mpc": { "total_cost": 17.789, "lataccel_cost": null, "jerk_cost": null, "note": "v2 MPC lookup table, SOTA" }
+    "pid": {
+      "total_cost": 84.85,
+      "lataccel_cost": 1.272,
+      "jerk_cost": 21.27,
+      "note": "100 segs, ubuntu baseline run"
+    },
+    "tfpgh_v1_bc": {
+      "total_cost": 43.776,
+      "lataccel_cost": null,
+      "jerk_cost": null,
+      "note": "v1 behavioral cloning"
+    },
+    "tfpgh_v2_mpc": {
+      "total_cost": 17.789,
+      "lataccel_cost": null,
+      "jerk_cost": null,
+      "note": "v2 MPC lookup table, SOTA"
+    }
   }
 }

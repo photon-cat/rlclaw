@@ -1,0 +1,19 @@
+[Unit]
+Description=rlclaw research agent
+After=network.target
+StartLimitIntervalSec=7200
+StartLimitBurst=12
+
+[Service]
+Type=simple
+User=jacob
+WorkingDirectory=/home/jacob/rlclaw
+Environment=CLAUDECODE=
+ExecStart=/usr/bin/npx tsx src/index.ts
+Restart=on-failure
+RestartSec=600
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

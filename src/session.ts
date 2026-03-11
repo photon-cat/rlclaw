@@ -7,8 +7,9 @@ const SESSION_SUMMARY = path.join(SESSION_DIR, "summary.md");
 
 export interface SessionEntry {
   time: string;
-  role: "orchestrator" | "worker_result" | "command" | "system";
+  role: "orchestrator" | "worker_dispatch" | "worker_result" | "command" | "system";
   content: string;
+  agent?: string;
 }
 
 export function initSession(): void {

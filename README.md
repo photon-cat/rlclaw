@@ -1,210 +1,199 @@
 # rlclaw
 
-A general-purpose agent environment for reinforcement learning research. Claude Code agents get compute, tools, and autonomy to run experiments, iterate on ideas, and report novel findings.
+Autonomous AI research agent for the [comma.ai Controls Challenge v2](https://github.com/commaai/controls_challenge). A Claude Code orchestrator runs 24/7, designing, training, and evaluating controllers for lateral car steering — with a Discord bot for monitoring and steering the research.
 
-## How It Works
+## Goal
 
-You define a **research problem**. rlclaw spins up a team of specialist Claude Code agents that autonomously:
+Minimize `total_cost = (lataccel_cost * 50) + jerk_cost` for lateral acceleration control. Beat PID baseline (~81), approach SOTA (17.789).
 
-- Study reference implementations and papers
-- Design and implement approaches
-- Run GPU experiments on Colab Pro+ (15 min max each)
-- Evaluate results, track metrics, iterate
-- Report back with findings
-
-Each problem is fully isolated — its own agents, notebooks, results, and workspace. Multiple problems can run concurrently.
+| Benchmark | Score | Method |
+|---|---|---|
+| PID baseline | ~81 | Proportional-integral-derivative |
+| tfpgh v1 | 43.776 | CMA-ES + trajectory optimization + behavioral cloning |
+| tfpgh v2 (SOTA) | 17.789 | MPC with inverse CDF sampling of physics model |
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    Dashboard (:3000)                 │
-│  Problem status • Notebook pool • Experiment logs   │
-│  Results comparison • Agent activity • GPU usage    │
-└──────────────────────┬──────────────────────────────┘
-                       │
-        ┌──────────────┼──────────────┐
-        ▼              ▼              ▼
-   ┌─────────┐   ┌─────────┐   ┌─────────┐
-   │Problem 1│   │Problem 2│   │Problem 3│
-   │ comma   │   │ (next)  │   │  ...    │
-   └────┬────┘   └────┬────┘   └────┬────┘
-        │              │              │
-   ┌────▼────┐   ┌────▼────┐   ┌────▼────┐
-   │  Agent  │   │  Agent  │   │  Agent  │
-   │  Team   │   │  Team   │   │  Team   │
-   └────┬────┘   └────┬────┘   └────┬────┘
-        │              │              │
-        └──────────────┼──────────────┘
-                       ▼
-              ┌─────────────────┐
-              │  Notebook Pool  │
-              │ 01 │ 02 │ 03   │
-              └────────┬────────┘
-                       ▼
-              ┌─────────────────┐
-              │  VS Code Bridge │
-              │   (:18808)      │
-              └────────┬────────┘
-                       ▼
-              ┌─────────────────┐
-              │  Colab Pro+     │
-              │  T4 / A100 GPU  │
-              └─────────────────┘
+┌──────────────────────────────────────────────┐
+│              Discord Bot                      │
+│  @mention → mediator (Opus) → orchestrator   │
+│  Outbox watcher ← notify() ← orchestrator    │
+└──────────────────┬───────────────────────────┘
+                   │
+        ┌──────────┼──────────┐
+        ▼          ▼          ▼
+   Orchestrator  Workers   Dashboard
+   (Claude Code) (Claude   (:3000)
+    long-run      Code
+    session)      spawned
+        │         on demand
+        ▼
+   Local GPU (RTX 5070 Ti, 16GB VRAM)
 ```
 
-### Agent Teams
+**Three systemd services:**
+- `rlclaw-agent` — orchestrator that plans and runs experiments (auto-restarts on crash/usage limit)
+- `rlclaw-bot` — Discord bot with mediator (Opus) for user interaction
+- `rlclaw-dashboard` — web dashboard showing session stats, GPU, scores, logs
 
-Each problem gets its own orchestrator and specialist agents. For the comma controls challenge:
+### How it works
 
-| Agent | Role |
-|---|---|
-| **orchestrator** | Breaks down the problem, delegates, tracks progress |
-| **arch-search** | Explores controller architectures |
-| **reward-optimizer** | Designs loss functions and training objectives |
-| **data-engineer** | Builds data pipelines and generates training data |
-| **evaluator** | Runs benchmarks, tracks results |
-| **colab-manager** | Manages GPU notebook checkout and execution |
+1. **Orchestrator** (`src/index.ts`) runs a long-lived Claude Code session that autonomously researches controller designs, writes code, trains models, and evaluates results.
+2. **Workers** are spawned on demand — the orchestrator writes a task file to `workspace/workers/task_<name>.txt`, the system launches a separate Claude Code instance, and results are injected back.
+3. **Discord bot** (`src/discord-bot.ts`) provides a user interface — @mention the bot to ask questions (handled by a mediator agent that reads logs/results directly) or steer research (relayed to orchestrator via `commands.txt`).
+4. **Dashboard** (`src/dashboard/server.ts`) serves a web UI showing session status, token usage/cost, GPU stats, experiment scores, activity logs, and a command input.
+5. **Notifications** (`src/notify.ts`) writes messages to an outbox directory; the Discord bot picks them up and sends to the channel.
+6. **Session checkpointing** (`src/session.ts`) logs all orchestrator/worker activity to JSONL. On restart, the orchestrator resumes from the previous session context.
 
-### Notebook Pool
-
-3 Colab Pro+ GPU notebooks shared across all problems. Managed by a checkout system:
-
-1. Agent requests a notebook from the pool
-2. Pool assigns an available notebook, sets a 15-minute deadline
-3. Agent writes experiment code into the notebook
-4. VS Code bridge triggers execution on the Colab GPU runtime
-5. Agent polls for results, collects outputs
-6. Notebook is released back to the pool
-
-Hard limit: **15 minutes per experiment**. Forces fast iteration. Long training gets broken into checkpointed stages.
-
-### VS Code Bridge
-
-A lightweight VS Code extension (`rlclaw-bridge`) that exposes notebook control over HTTP:
+## Project Structure
 
 ```
-POST /run           — execute all cells in a notebook
-POST /run-cell      — execute a specific cell
-POST /read-outputs  — read cell outputs
-GET  /status        — get active notebook info
-POST /open          — open a notebook in VS Code
+src/
+  index.ts              — orchestrator (main agent loop, worker management)
+  discord-bot.ts        — Discord bot + mediator agent
+  notify.ts             — outbox-based Discord notification system
+  session.ts            — session logging and crash-resume
+  telemetry.ts          — token usage and cost tracking
+  dashboard/
+    server.ts           — HTTP API + static file server
+    ui/index.html       — single-page dashboard
+  agents/
+    definitions.ts      — multi-agent definitions (reference, currently unused)
+  controllers/
+    __init__.py          — BaseController import
+    pid.py              — PID baseline (P=0.195, I=0.1, D=-0.053)
+    mpc.py              — Model-predictive PID (ONNX model + candidate search)
+    cmaes_mlp.py        — CMA-ES optimized MLP (653 params, 2-hidden-layer)
+  algos/
+    cmaes_train.py      — CMA-ES training script for the MLP controller
+  eval/
+    run_eval.py         — parallel evaluation script
+    results.json        — experiment result tracker
+vendor/                 — (gitignored) vendored dependencies
+  commaai/              — controls challenge simulator, ONNX model, data
+  tfpgh/                — SOTA reference solution
+workspace/              — (gitignored) runtime workspace for agent output
 ```
-
-The bridge connects to Colab GPU runtimes via the [Google Colab VS Code extension](https://marketplace.visualstudio.com/items?itemName=google.colab). No API keys, no browser automation — just HTTP calls to your local VS Code.
 
 ## Setup
 
 ### Prerequisites
 
 - Node.js 18+
-- Python 3.11+ with Jupyter (`pip install jupyter nbclient`)
-- [VS Code](https://code.visualstudio.com/) with:
-  - [Google Colab extension](https://marketplace.visualstudio.com/items?itemName=google.colab)
-  - [Jupyter extension](https://marketplace.visualstudio.com/items?itemName=ms-toolsai.jupyter)
-- [Claude Code](https://claude.ai/claude-code) with Max subscription
-- Colab Pro+ subscription ($49.99/mo for GPU access)
+- Python 3.11+ with numpy, pandas, onnxruntime, cma, tqdm
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI installed and authenticated
+- NVIDIA GPU with CUDA (tested on RTX 5070 Ti)
 
 ### Install
 
 ```bash
-git clone https://github.com/your-org/rlclaw.git
+git clone https://github.com/jacobbridges/rlclaw.git
 cd rlclaw
 npm install
+pip install numpy pandas onnxruntime cma tqdm
 ```
 
-### Connect Colab Notebooks
+### Environment Variables
 
-1. Open each notebook (`src/colab/notebook_01.ipynb` through `03`) in VS Code
-2. Click **Select Kernel → Colab → Auto Connect**
-3. The bridge extension starts automatically on port 18808
-
-### Verify
+Create a `.env` file in the project root (gitignored):
 
 ```bash
-# Check bridge is running
-curl http://127.0.0.1:18808/status
-
-# Run a test notebook on Colab GPU
-curl -X POST http://127.0.0.1:18808/run \
-  -H "Content-Type: application/json" \
-  -d '{"filePath": "src/colab/notebook_01.ipynb"}'
+DISCORD_BOT_TOKEN=<your discord bot token>
+DISCORD_USER_ID=<your discord user id>
+DISCORD_VIBES_CHANNEL_ID=<channel id for bot messages>
+DISCORD_RLCLAW_CHANNEL_ID=<optional second channel id>
 ```
 
-## Usage
+### Vendor Setup
 
-### Run a research problem
+The `vendor/` directory is gitignored. Clone the dependencies:
 
 ```bash
-# Start the comma controls challenge
-npm start
+# Controls challenge simulator + data
+git clone https://github.com/commaai/controls_challenge vendor/commaai
+
+# SOTA reference solution
+git clone https://github.com/tfpgh/controls_challenge vendor/tfpgh
+```
+
+### Running
+
+```bash
+# Start everything manually
+npm start                              # orchestrator only
+npx tsx src/discord-bot.ts             # discord bot
+npx tsx src/dashboard/server.ts        # dashboard on :3000
 
 # Custom research prompt
-npx tsx src/index.ts --prompt="Explore whether a tiny transformer (< 50K params) can beat PID for lateral control"
+npx tsx src/index.ts --prompt="Explore MPC approaches"
+
+# Multiple workers
+npx tsx src/index.ts --workers=3
 ```
 
-### Adding a new problem
+### Systemd Services (production)
 
-Create a new problem directory under `src/problems/`:
+Install all three services to run on boot:
 
-```
-src/problems/my-problem/
-  index.ts          — orchestrator with problem-specific system prompt
-  agents.ts         — specialist agent definitions
-  eval/             — evaluation code and results
-  controllers/      — implementations
+```bash
+sudo ./install-services.sh
 ```
 
-Each problem is self-contained. The orchestrator imports from shared infra (notebook pool, bridge client) but has its own agents, prompts, and workspace.
+This installs and enables:
+- `rlclaw-agent` — restarts every 10 min on exit (handles Claude Code usage limits)
+- `rlclaw-bot` — always-on Discord bot
+- `rlclaw-dashboard` — always-on web dashboard
 
-## Current Problems
-
-### 1. comma Controls Challenge
-
-**Goal:** Minimize `total_cost = (lataccel_cost × 50) + jerk_cost` for lateral car steering control.
-
-| Benchmark | Score | Notes |
-|---|---|---|
-| PID baseline | ~73 | Simple proportional-integral-derivative |
-| SOTA (tfpgh) | 43.776 | CMA-ES → GPU trajectory optimization → behavioral cloning |
-| Our target | < 60 | Compute-efficient, trainable in 15 min on a single GPU |
-
-Reference code in `vendor/commaai/` and `vendor/tfpgh/`.
-
-## Project Structure
-
-```
-rlclaw/
-├── src/
-│   ├── index.ts                — main entry point
-│   ├── agents/
-│   │   └── definitions.ts      — agent team definitions
-│   ├── controllers/            — controller implementations
-│   ├── algos/                  — training scripts and configs
-│   ├── eval/
-│   │   └── results.json        — experiment result tracker
-│   ├── colab/
-│   │   ├── notebook_01-03.ipynb — GPU notebook pool
-│   │   ├── pool_state.json     — checkout state
-│   │   └── notebook_pool.ts    — pool management
-│   └── vscode-ext/
-│       ├── extension.js        — VS Code bridge extension
-│       └── package.json
-├── vendor/
-│   ├── commaai/                — controls challenge + dataset
-│   └── tfpgh/                  — SOTA reference solution
-├── CLAUDE.md                   — agent instructions
-├── package.json
-└── tsconfig.json
+```bash
+# Manage services
+systemctl status rlclaw-agent
+journalctl -fu rlclaw-agent          # live agent logs
+journalctl -fu rlclaw-bot            # live bot logs
 ```
 
-## How It's Built
+## Evaluation
 
-- **Agent SDK** (`@anthropic-ai/claude-agent-sdk`) — spawns Claude Code agents with tool access. Authenticated via Max subscription, no API key needed.
-- **VS Code + Colab extension** — provides GPU runtimes. The rlclaw-bridge extension exposes control over HTTP.
-- **Notebook pool** — JSON-based checkout system with 15-min deadlines and automatic reclamation.
+```bash
+# Quick eval (100 segments, ~7-20s depending on controller)
+python src/eval/run_eval.py --controller pid --num_segs 100
 
-The agents have full access to `Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep`, and can spawn sub-agents via `Agent`. They operate on the local filesystem, run Python scripts, and trigger GPU experiments through the bridge.
+# Eval with result saving
+python src/eval/run_eval.py --controller mpc --num_segs 100 --save --tag mpc_v1
+
+# Using the vendor eval directly
+cd vendor/commaai && python3 tinyphysics.py --model_path ./models/tinyphysics.onnx --data_path ./data --num_segs 100 --controller pid
+```
+
+## Controllers
+
+| Controller | File | Params | Description |
+|---|---|---|---|
+| PID | `src/controllers/pid.py` | 3 | Classic PID with tuned gains |
+| MPC | `src/controllers/mpc.py` | 3 (PID) + model | PID + ONNX model-based candidate search |
+| CMA-ES MLP | `src/controllers/cmaes_mlp.py` | 653 | 2-hidden-layer MLP optimized with CMA-ES |
+
+### Training
+
+```bash
+# CMA-ES training (20 segments, 5 min)
+cd /home/jacob/rlclaw && python3 -m src.algos.cmaes_train --num_segs 20 --max_time 300
+
+# Resume from checkpoint
+python3 -m src.algos.cmaes_train --num_segs 20 --max_time 300 --resume
+```
+
+## Discord Bot Commands
+
+@mention the bot in the configured channel:
+
+| Command | Description |
+|---|---|
+| `!status` | Quick status from local files (no mediator) |
+| `!resume` | Resume orchestrator autonomous work |
+| `!reset` | Reset mediator session (fresh context) |
+| `!help` | Show commands |
+| Anything else | Routed to mediator (Opus) which can answer questions or steer research |
 
 ## License
 

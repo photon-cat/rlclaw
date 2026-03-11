@@ -1,7 +1,8 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import type { AgentDefinition } from "@anthropic-ai/claude-agent-sdk";
+import type { Query } from "@anthropic-ai/claude-agent-sdk";
 import * as fs from "fs";
 import * as path from "path";
+import { spawn } from "child_process";
 
 // Load .env before anything else
 const envPath = path.join(__dirname, "..", ".env");
@@ -31,7 +32,8 @@ import {
 delete process.env.CLAUDECODE;
 
 const COMMANDS_FILE = path.join(__dirname, "..", "commands.txt");
-const INPUT_FILE = path.join(__dirname, "discord_input.txt");
+const WORKER_DIR = path.join(__dirname, "..", "workspace", "workers");
+const PROJECT_ROOT = path.join(__dirname, "..");
 
 const CHALLENGE_CONTEXT = `=== COMMA CONTROLS CHALLENGE v2 ===
 Goal: Minimize total_cost = (lataccel_cost * 50) + jerk_cost for lateral car control.
@@ -59,90 +61,67 @@ All your work goes in workspace/ (gitignored). Do NOT write to src/.
   workspace/checkpoints/  — saved models
   workspace/eval/         — evaluation results and logs
   workspace/results.json  — experiment result tracker
+  workspace/workers/      — worker task/result files
 
 GPU: Local RTX 5070 Ti (16GB VRAM). Run experiments directly as python scripts.
-No hard time limit — long training runs (hours/days) are fine IF:
-  - You checkpoint frequently (every 10 min minimum) to workspace/checkpoints/
-  - You log progress to workspace/eval/ so results survive crashes
-  - You don't hog the GPU if another task is queued — check commands.txt
 Controllers must run at 10Hz+ (real-time). Target <100K params for efficiency.
 
 Quick eval (~7s): cd vendor/commaai && python3 tinyphysics.py --model_path ./models/tinyphysics.onnx --data_path ./data --num_segs 100 --controller pid`;
 
-const worker: Record<string, AgentDefinition> = {
-  worker: {
-    description:
-      "Executes research tasks: reads code, writes controllers, runs training, evaluates results. Use this for any task that requires tools.",
-    prompt: `You are a research engineer working on the comma.ai Controls Challenge v2.
-You receive specific tasks from the lead researcher and execute them thoroughly.
+const WORKER_SYSTEM = `You are a research engineer working on the comma.ai Controls Challenge v2.
+You receive a specific task and execute it thoroughly.
 
 ${CHALLENGE_CONTEXT}
 
-You have access to all tools: read/write/edit files, run bash commands, search code.
-Execute the task you're given completely, then report back with concrete results and metrics.
-Be thorough but efficient. Always report numbers, not just "it worked".
+=== RULES ===
+- Execute the task completely, then your output is your final report.
+- Be thorough but efficient. Always report concrete numbers and results.
+- All work goes in workspace/. Do NOT write to src/. Read vendor/ for reference only.
+- All training scripts MUST include: periodic checkpointing to workspace/checkpoints/,
+  metric logging to workspace/eval/, and workspace/results.json updates.`;
 
-IMPORTANT: If you are running a long task (training, large eval), periodically check commands.txt
-in the project root. If it has content, read it, acknowledge by writing a short response to
-src/discord_response.txt, and adapt your current work if the command is relevant.
-
-All your work goes in workspace/ — controllers, training scripts, checkpoints, results.
-Do NOT write to src/. Read vendor/ for reference but don't modify it.
-
-CHECKPOINTING: All training scripts MUST save checkpoints periodically (every 10 min minimum)
-to workspace/checkpoints/ so work survives crashes. Log metrics to workspace/eval/ after
-each checkpoint. Update workspace/results.json with experiment progress.`,
-    tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
-  },
-};
+const numWorkers = parseInt(
+  process.argv.find((a) => a.startsWith("--workers="))?.split("=")[1] ||
+    process.env.RLCLAW_WORKERS ||
+    "1",
+  10
+);
 
 const ORCHESTRATOR_PROMPT = `You are the lead researcher for the comma.ai Controls Challenge v2.
+You work autonomously. A mediator agent handles all user communication — you just focus on research.
+
+!!! ABSOLUTE RULE — READ THIS FIRST !!!
+You MUST background ALL python scripts. NEVER run python directly — it blocks the system.
+ALWAYS use:
+  nohup python3 script.py > workspace/eval/name.log 2>&1 & echo "PID=$!"
+Then check with: tail -20 workspace/eval/name.log
+The ONLY exception is one-liners under 10 seconds (e.g., python3 -c "print(1+1)").
 
 ${CHALLENGE_CONTEXT}
 
 === HOW YOU WORK ===
-You have ONE worker agent ("worker") that executes tasks for you.
-You PLAN what to do, then delegate ONE task at a time to the worker using the Agent tool.
-When the worker returns, you REVIEW results, UPDATE your plan, and delegate the next task.
+You have tools to read/write/edit files, run commands, and search code.
 
-Each time you call the worker, give it a SPECIFIC, ACTIONABLE task. Not vague goals.
-Good: "Read vendor/tfpgh/controllers/lookup.py and vendor/tfpgh/tinyphysics.py, summarize how the MPC lookup table was generated and how the physics model probabilities are sampled"
-Bad: "Study the SOTA solution"
+To DISPATCH A WORKER for independent tasks, write a file to workspace/workers/task_<name>.txt
+with the task description. The system launches a separate Claude Code instance for each task.
+Workers write results to workspace/workers/result_<name>.txt when done.
+The system injects worker results into your conversation automatically.
 
-Good: "Write a CMA-ES training script to workspace/algos/cmaes_mlp.py that evolves a 2-hidden-layer MLP (32,16) to minimize total_cost on 100 segments. Run it for 5 minutes."
-Bad: "Try to beat PID"
+Max ${numWorkers} concurrent workers. Workers are best for: code analysis, writing scripts, quick evals.
+Track background PIDs in workspace/eval/running_pids.txt. Check nvidia-smi before GPU jobs.
 
-=== COMMANDS FILE ===
-The user can steer you by writing to commands.txt in the project root (or @mentioning the bot in Discord).
-Before each new worker task, check if commands.txt exists and has content.
-If it does, read it, incorporate the instructions, then clear the file by writing an empty string.
-This lets the user redirect your research without stopping the session.
-
-IMPORTANT: After reading and processing a command from commands.txt, write a SHORT acknowledgment
-to the file src/discord_response.txt so the user gets a reply in Discord. Keep it under 500 chars.
-Example: "Got it, switching to MPC approach. Current task: studying tfpgh lookup.py"
-
-=== ASKING FOR INPUT ===
-If you hit a decision point where user input would be valuable (e.g., which direction to explore,
-whether to spend GPU time on something risky, or you're stuck), write a message to the file
-src/discord_input.txt with your question. The system will ping the user on Discord.
-Then check commands.txt on subsequent turns for their response.
-Only do this for genuine decision points — don't block on every step.
+=== INJECTED MESSAGES ===
+You may receive injected messages from the mediator (user requests) or the system.
+When you see "[Mediator directive]:", treat it as a high-priority research directive from the user.
+Execute it, then continue your work. No need to write response files — the mediator handles Discord.
+When you see "[System: ... Resume...]", continue autonomous research.
 
 === RESEARCH STRATEGY ===
-Phase 1: Understand
-  - Run PID baseline, study tfpgh v2 MPC solution
-  - Understand how lookup.py and the inverse CDF sampling works
-  - Establish fast local eval pipeline
-Phase 2: Quick wins
-  - Implement real-time MPC using physics model
-  - CMA-ES on small MLP, improved PID with learned gains
-Phase 3: Iterate
-  - Better controllers generate better data -> retrain
-  - Explore novel architectures and MPC variants
+Phase 1: Understand — run PID baseline, study tfpgh v2 MPC, establish eval pipeline
+Phase 2: Quick wins — MPC, CMA-ES MLP, improved PID with learned gains
+Phase 3: Iterate — better controllers -> better data -> retrain, novel architectures
 
-Track all results in workspace/results.json. Always know current best score.
-After each worker task, briefly note what you learned and what to do next.`;
+Track all results in workspace/results.json. Always know current best score.`;
 
 const promptArg = process.argv
   .find((a) => a.startsWith("--prompt="))
@@ -159,19 +138,131 @@ Start with Phase 1:
 
 const prompt = promptArg || defaultPrompt;
 
+// ===== Worker Management =====
+
+interface WorkerState {
+  name: string;
+  pid: number;
+  startTime: number;
+  taskFile: string;
+  resultFile: string;
+}
+
+const activeWorkerProcs: Map<string, WorkerState> = new Map();
+
+function ensureWorkerDir() {
+  fs.mkdirSync(WORKER_DIR, { recursive: true });
+}
+
+/** Launch workers for any new task files */
+function checkForNewTasks() {
+  ensureWorkerDir();
+  const files = fs.readdirSync(WORKER_DIR).filter(f => f.startsWith("task_") && f.endsWith(".txt"));
+
+  for (const file of files) {
+    const name = file.replace("task_", "").replace(".txt", "");
+    const resultFile = path.join(WORKER_DIR, `result_${name}.txt`);
+
+    if (activeWorkerProcs.has(name)) continue;
+    if (fs.existsSync(resultFile)) continue;
+    if (activeWorkerProcs.size >= numWorkers) continue;
+
+    const taskPath = path.join(WORKER_DIR, file);
+    const task = fs.readFileSync(taskPath, "utf-8").trim();
+    if (!task) continue;
+
+    console.log(`[worker:${name}] Launching...`);
+    recordLog(`-> worker:${name}: ${task.slice(0, 200)}`);
+    appendSession({ time: new Date().toISOString(), role: "worker_dispatch", content: task.slice(0, 2000), agent: name });
+
+    const workerPrompt = `${task}\n\nWhen done, report your complete results with specific numbers and file paths.`;
+
+    const child = spawn("claude", [
+      "--dangerously-skip-permissions",
+      "-p", workerPrompt,
+      "--output-file", resultFile,
+    ], {
+      cwd: PROJECT_ROOT,
+      env: { ...process.env, CLAUDECODE: "" },
+      stdio: "ignore",
+      detached: true,
+    });
+
+    child.unref();
+
+    if (child.pid) {
+      activeWorkerProcs.set(name, {
+        name,
+        pid: child.pid,
+        startTime: Date.now(),
+        taskFile: taskPath,
+        resultFile,
+      });
+    }
+  }
+}
+
+/** Check for completed workers, return result messages to inject */
+function checkWorkerResults(): string[] {
+  const messages: string[] = [];
+
+  for (const [name, worker] of activeWorkerProcs) {
+    if (fs.existsSync(worker.resultFile)) {
+      try {
+        const result = fs.readFileSync(worker.resultFile, "utf-8").trim();
+        if (result) {
+          const elapsed = Math.round((Date.now() - worker.startTime) / 1000);
+          console.log(`[worker:${name}] Completed in ${elapsed}s`);
+          recordLog(`<- worker:${name}: ${result.slice(0, 200)}`);
+          appendSession({ time: new Date().toISOString(), role: "worker_result", content: result.slice(0, 2000), agent: name });
+          messages.push(`[Worker "${name}" completed in ${elapsed}s]\n${result}`);
+          activeWorkerProcs.delete(name);
+          try { fs.unlinkSync(worker.taskFile); } catch {}
+        }
+      } catch {}
+    } else {
+      // Check if process died
+      try {
+        process.kill(worker.pid, 0);
+      } catch {
+        const elapsed = Math.round((Date.now() - worker.startTime) / 1000);
+        console.log(`[worker:${name}] Died after ${elapsed}s`);
+        recordLog(`!! worker:${name} died`);
+        appendSession({ time: new Date().toISOString(), role: "worker_result", content: "Worker died without results.", agent: name });
+        messages.push(`[Worker "${name}" failed — died after ${elapsed}s without results]`);
+        activeWorkerProcs.delete(name);
+        try { fs.unlinkSync(worker.taskFile); } catch {}
+      }
+    }
+  }
+
+  return messages;
+}
+
+function getWorkerStatus(): string {
+  if (activeWorkerProcs.size === 0) return "";
+  const lines = [...activeWorkerProcs.values()].map(w => {
+    const elapsed = Math.round((Date.now() - w.startTime) / 1000);
+    return `  - ${w.name}: running ${elapsed}s (PID ${w.pid})`;
+  });
+  return `\nActive workers:\n${lines.join("\n")}`;
+}
+
+// ===== Main =====
+
 async function main() {
   console.log(`\n=== rlclaw — comma controls challenge v2 ===`);
-  console.log(`Mode: orchestrator + single worker`);
+  console.log(`Mode: orchestrator + ${numWorkers} async worker(s)`);
   console.log(`GPU: RTX 5070 Ti (16GB VRAM)`);
   console.log(`Discord: notifications enabled`);
   console.log(`Dashboard: http://localhost:3000`);
-  console.log(`Commands: write to commands.txt to steer research`);
+  console.log(`Commands: @mention in Discord or write to commands.txt`);
   console.log(`Prompt: ${prompt.slice(0, 100)}...\n`);
 
   initTelemetry();
   initSession();
+  ensureWorkerDir();
 
-  // Check for previous session to resume from
   const resumeContext = getResumeContext();
   const workspaceState = getWorkspaceState();
   let effectivePrompt = prompt;
@@ -184,81 +275,111 @@ async function main() {
     await notify("Session started. Prompt: " + prompt.slice(0, 200));
   }
 
-  let turnCount = 0;
-  let lastSummary = "";
-
-  for await (const message of query({
+  // Start the orchestrator query
+  const session = query({
     prompt: effectivePrompt,
     options: {
-      cwd: process.cwd(),
+      cwd: PROJECT_ROOT,
       systemPrompt: ORCHESTRATOR_PROMPT,
-      allowedTools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "Agent"],
-      agents: worker,
-      maxTurns: 200,
+      allowedTools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
+      maxTurns: 500,
       permissionMode: "bypassPermissions",
       allowDangerouslySkipPermissions: true,
     },
-  })) {
-    // Log any commands that came in
-    if (fs.existsSync(COMMANDS_FILE)) {
-      const cmd = fs.readFileSync(COMMANDS_FILE, "utf-8").trim();
-      if (cmd) {
-        appendSession({ time: new Date().toISOString(), role: "command", content: cmd });
-      }
-    }
+  });
 
-    // Check if orchestrator is asking for user input
-    if (fs.existsSync(INPUT_FILE)) {
-      const question = fs.readFileSync(INPUT_FILE, "utf-8").trim();
-      if (question) {
-        await notify(question + "\n\n_Reply by writing to `commands.txt` on the server._", "input");
-        fs.unlinkSync(INPUT_FILE);
-      }
-    }
+  // Poll for mediator commands and worker results, inject into session
+  let lastSeenCmd = "";
 
-    if ("result" in message) {
-      console.log("\n=== Result ===");
-      console.log(message.result);
-      recordLog("SESSION COMPLETE: " + message.result.slice(0, 300));
-      setStatus("complete");
-      await notify(message.result.slice(0, 500), "success");
-    } else if ("message" in message) {
-      turnCount++;
-      const msg = message.message as any;
+  const pollInterval = setInterval(async () => {
+    try {
+      // Check for commands from the mediator
+      if (fs.existsSync(COMMANDS_FILE)) {
+        const cmd = fs.readFileSync(COMMANDS_FILE, "utf-8").trim();
+        if (cmd && cmd !== lastSeenCmd) {
+          lastSeenCmd = cmd;
+          fs.writeFileSync(COMMANDS_FILE, "");
 
-      // Track token usage
-      if (msg?.usage) {
-        recordTurn(msg);
-      }
-
-      if (msg?.content) {
-        const text = Array.isArray(msg.content)
-          ? msg.content
-              .filter((b: any) => b.type === "text")
-              .map((b: any) => b.text)
-              .join("\n")
-          : String(msg.content);
-        if (text && msg.role === "assistant") {
-          console.log(`\n[turn ${turnCount}] ${text.slice(0, 200)}`);
-          recordLog(text.slice(0, 300));
-
-          // Checkpoint conversation to disk
-          appendSession({ time: new Date().toISOString(), role: "orchestrator", content: text });
-          lastSummary = text;
-
-          // Write running summary every 5 turns
-          if (turnCount % 5 === 0) {
-            writeSessionSummary(
-              `Last updated: ${new Date().toISOString()}\nTurn: ${turnCount}\n\nLast orchestrator output:\n${lastSummary.slice(0, 1000)}\n${getWorkspaceState()}`
-            );
+          if (cmd === "!resume") {
+            console.log(`[system] Resume triggered`);
+            await session.send("[System: Resume autonomous research work.]");
+          } else {
+            // Mediator directive — inject into orchestrator
+            appendSession({ time: new Date().toISOString(), role: "command", content: cmd });
+            console.log(`[mediator] Directive: ${cmd.slice(0, 100)}`);
+            await session.send({
+              type: "user",
+              message: { role: "user", content: `[Mediator directive]: ${cmd}` },
+              parent_tool_use_id: null,
+              session_id: session.sessionId,
+              priority: "now",
+            });
           }
+        }
+      }
 
-          if (turnCount % 3 === 0 || text.includes("best score") || text.includes("Phase")) {
-            await notify(text.slice(0, 500));
+      // Check for new worker tasks
+      checkForNewTasks();
+
+      // Check for completed worker results
+      const workerResults = checkWorkerResults();
+      for (const result of workerResults) {
+        await session.send(result);
+      }
+    } catch (err) {
+      // Ignore errors in poll loop (session may be between turns)
+    }
+  }, 3_000);
+
+  // Stream orchestrator messages
+  let turnCount = 0;
+  let lastSummary = "";
+
+  try {
+    for await (const message of session) {
+      if ("result" in message) {
+        console.log("\n=== Result ===");
+        console.log(message.result);
+        recordLog("SESSION COMPLETE: " + message.result.slice(0, 300));
+        setStatus("complete");
+        await notify(message.result.slice(0, 500), "success");
+      } else if ("message" in message) {
+        turnCount++;
+        const msg = message.message as any;
+
+        if (msg?.usage) {
+          recordTurn(msg);
+        }
+
+        if (msg?.content) {
+          const text = Array.isArray(msg.content)
+            ? msg.content
+                .filter((b: any) => b.type === "text")
+                .map((b: any) => b.text)
+                .join("\n")
+            : String(msg.content);
+
+          if (text && msg.role === "assistant") {
+            console.log(`\n[turn ${turnCount}] ${text.slice(0, 200)}`);
+            recordLog(text.slice(0, 300));
+            appendSession({ time: new Date().toISOString(), role: "orchestrator", content: text });
+            lastSummary = text;
+
+            if (turnCount % 5 === 0) {
+              writeSessionSummary(
+                `Last updated: ${new Date().toISOString()}\nTurn: ${turnCount}\n\nLast orchestrator output:\n${lastSummary.slice(0, 1000)}\n${getWorkerStatus()}\n${getWorkspaceState()}`
+              );
+            }
+
+            if (turnCount % 3 === 0 || text.includes("best score") || text.includes("Phase")) {
+              await notify(text.slice(0, 500));
+            }
           }
         }
       }
     }
+  } finally {
+    clearInterval(pollInterval);
   }
 
   setStatus("complete");
