@@ -302,18 +302,14 @@ async function main() {
 
           if (cmd === "!resume") {
             console.log(`[system] Resume triggered`);
+            await session.interrupt();
             await session.send("[System: Resume autonomous research work.]");
           } else {
-            // Mediator directive — inject into orchestrator
+            // Mediator directive — interrupt current work and inject
             appendSession({ time: new Date().toISOString(), role: "command", content: cmd });
-            console.log(`[mediator] Directive: ${cmd.slice(0, 100)}`);
-            await session.send({
-              type: "user",
-              message: { role: "user", content: `[Mediator directive]: ${cmd}` },
-              parent_tool_use_id: null,
-              session_id: session.sessionId,
-              priority: "now",
-            });
+            console.log(`[mediator] Interrupting orchestrator for directive: ${cmd.slice(0, 100)}`);
+            await session.interrupt();
+            await session.send(`[Mediator directive]: ${cmd}`);
           }
         }
       }
