@@ -10,3 +10,4 @@ logs/
 wandb/
 *.zip
 *.vsix
+.google_token.json
