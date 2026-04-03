@@ -3,12 +3,8 @@
   "version": "1.0.0",
   "description": "General-purpose agent environment for RL research",
   "main": "dist/index.js",
-  "bin": {
-    "colab": "./src/colab/cli.ts"
-  },
   "scripts": {
     "start": "tsx src/index.ts",
-    "colab": "tsx src/colab/cli.ts",
     "dashboard": "tsx src/dashboard/server.ts",
     "dev": "tsx src/dashboard/server.ts & tsx src/index.ts",
     "problem:comma": "tsx src/index.ts --prompt='Begin the comma controls challenge research program'"
