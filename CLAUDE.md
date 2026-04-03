@@ -3,23 +3,24 @@
 ## What This Is
 
 An agent-orchestrated research system for the [comma.ai Controls Challenge](https://github.com/commaai/controls_challenge).
-One main Claude Code agent delegates to 5 specialist subagents. GPU experiments run on Colab Pro+ via a VS Code bridge.
+One main Claude Code agent delegates to 5 specialist subagents. GPU experiments run locally on an RTX 5070 Ti (16GB VRAM).
 
 ## Goal
 
 Find **compute-efficient** methods to minimize `total_cost = (lataccel_cost * 50) + jerk_cost`
-for lateral car steering control. Beat PID (~107), approach SOTA (43.776).
+for lateral car steering control. Beat PID (~85 on 100 segs), approach SOTA (43.776).
 
 ## Architecture
 
+Single-agent mode (default, cost-efficient):
 ```
-Main Agent (orchestrator, src/index.ts)
-  ├── arch-search      → controller architectures (<100K params)
-  ├── reward-optimizer → loss functions, noise annealing, training objectives
-  ├── data-engineer    → data generation, pipelines, DAgger
-  ├── evaluator        → benchmarks, result tracking, reports
-  └── colab-manager    → GPU notebook pool management
+Orchestrator (plans, reviews, decides next step)
+  └── Worker (executes one task at a time, returns results)
+       └── orchestrator reviews → delegates next task → ...
 ```
+
+Multi-agent mode available in `src/agents/definitions.ts` (5 specialists).
+Switch by importing and passing `agents` to the query options in index.ts.
 
 ## Project Structure
 
@@ -29,25 +30,18 @@ src/
   agents/definitions.ts — subagent prompts and config
   controllers/          — our controller implementations (Python)
   algos/                — training scripts and configs
+  checkpoints/          — saved model checkpoints
   eval/results.json     — experiment result tracker
-  colab/
-    notebook_01-03.ipynb — 3 Colab GPU notebooks (pool)
-    pool_state.json      — notebook checkout state
-    notebook_pool.ts     — pool management logic
 vendor/
   commaai/              — original challenge (tinyphysics.py, PID baseline, data/)
   tfpgh/                — SOTA solution (score 43.776)
 ```
 
-## Notebook Pool System
+## GPU Setup
 
-3 Colab notebooks shared across agents. Each experiment capped at **15 minutes**.
+Local RTX 5070 Ti (16GB VRAM) shared across all agents. Run experiments directly as python scripts.
 
-- Pool state: `src/colab/pool_state.json`
-- Bridge API: `http://127.0.0.1:18808` (VS Code extension)
-- Endpoints: `/run`, `/read-outputs`, `/status`, `/run-cell`, `/open`
-
-Workflow: check pool → write experiment into notebook → POST /run → poll /read-outputs → release notebook
+Each experiment capped at **15 minutes** for fast iteration.
 
 ## Running
 
@@ -67,16 +61,16 @@ npx tsx src/index.ts --prompt="..."    # custom prompt
 ## Evaluation
 
 ```bash
-# Quick local eval (CPU, ~1 min)
-cd vendor/commaai && python tinyphysics.py --model_path ./models/tinyphysics.onnx --data_path ./data --num_segs 100 --controller pid
+# Quick local eval (~7s, 100 segments)
+cd vendor/commaai && python3 tinyphysics.py --model_path ./models/tinyphysics.onnx --data_path ./data --num_segs 100 --controller pid
 
 # Compare controllers
-cd vendor/commaai && python eval.py --model_path ./models/tinyphysics.onnx --data_path ./data --num_segs 100 --test_controller <name> --baseline_controller pid
+cd vendor/commaai && python3 eval.py --model_path ./models/tinyphysics.onnx --data_path ./data --num_segs 100 --test_controller <name> --baseline_controller pid
 ```
 
 ## Constraints
 
-- Max 15 min per Colab experiment
-- 3 notebooks available concurrently
+- Max 15 min per experiment
+- 16GB VRAM shared across concurrent experiments
 - Controllers must run at 10Hz+ (real-time)
 - Target: <100K parameters for efficiency
