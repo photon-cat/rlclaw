@@ -16,4 +16,3 @@ backups/
 *.npy
 src/discord_outbox/
 /tmp/
-.google_token.json
